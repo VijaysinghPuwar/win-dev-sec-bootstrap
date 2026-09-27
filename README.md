@@ -32,7 +32,7 @@ This project handles both halves. Provisioning is driven by a validated package 
 - **Structured reports**: machine-readable JSON and a self-contained offline HTML page, with the user profile path redacted from evidence.
 - **Opt-in remediation** for 13 controls using native `SupportsShouldProcess` (`-WhatIf`, `-Confirm`), with the previous value backed up before each change and verified afterwards.
 - **Rollback** of recorded changes, with validation of every value read from the backup file.
-- **Tests and CI**: 210 Pester tests, PSScriptAnalyzer, and GitHub Actions on Windows running both PowerShell 7 and Windows PowerShell 5.1.
+- **Tests and CI**: over 200 Pester tests, PSScriptAnalyzer (including command compatibility checks for 5.1), and GitHub Actions on Windows running both PowerShell 7 and Windows PowerShell 5.1.
 
 ## Quick start
 
@@ -194,7 +194,9 @@ win-dev-sec-bootstrap/
 ├── tests/                         Pester suites and synthetic snapshot fixtures
 ├── tools/                         Lint and test runners, doc and sample generators
 ├── docs/                          Control reference, sample reports, resume notes
-└── .github/workflows/             CI (Windows, PS 7 and 5.1) and secret scanning
+├── .github/workflows/             CI (Windows, PS 7 and 5.1) and secret scanning
+├── PSScriptAnalyzerSettings.psd1  Analyzer rules, including 5.1/7 compatibility checks
+└── LICENSE
 ```
 
 Configuration holds data and code holds behaviour. `packages.json` is validated before use: ids must match a strict pattern (which also stops them from carrying extra command-line arguments), and duplicates across winget and pipx are rejected. `controls.json` holds control metadata only. Registry paths and commands are fixed in code, and a test fails if any control lacks an evaluator or if the Automated/Manual flag disagrees with the implemented remediation handlers.
