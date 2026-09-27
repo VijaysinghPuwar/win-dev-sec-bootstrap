@@ -5,6 +5,8 @@
 .PARAMETER ResultPath
     Optional NUnit XML output path (used by CI to publish results).
 #>
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseCompatibleCommands', '',
+    Justification = 'The 5.1 profile knows only the inbox Pester 3.4; this script imports Pester 5, which has -Configuration.')]
 [CmdletBinding()]
 param([string]$ResultPath)
 Set-StrictMode -Version 2.0

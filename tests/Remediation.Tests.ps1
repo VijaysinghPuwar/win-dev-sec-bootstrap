@@ -221,7 +221,7 @@ Describe 'Protect-BackupDirectory' {
         Should -Invoke -ModuleName Remediation Set-Acl -Times 1
         $script:appliedAcl.AreAccessRulesProtected | Should -BeTrue
         $sids = @($script:appliedAcl.GetAccessRules($true, $false, [System.Security.Principal.SecurityIdentifier]) | ForEach-Object { $_.IdentityReference.Value })
-        $sids | Should -Be @('S-1-5-32-544', 'S-1-5-18')
+        @($sids | Sort-Object) | Should -Be @('S-1-5-18', 'S-1-5-32-544')
     }
 
     It 'leaves an existing directory untouched' {

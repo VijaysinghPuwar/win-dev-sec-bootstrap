@@ -319,7 +319,10 @@ try {
     $stopwatch.Stop()
     Write-Status Info ('Finished in {0:hh\:mm\:ss} with exit code {1}' -f $stopwatch.Elapsed, $exitCode)
     if ($transcriptStarted) {
-        Stop-Transcript -WhatIf:$false | Out-Null
+        # Stop-Transcript has no -WhatIf in Windows PowerShell 5.1, so clear the
+        # preference instead; the run is finished at this point.
+        $WhatIfPreference = $false
+        Stop-Transcript | Out-Null
         Write-Status Info "Log: $(Protect-SensitiveText $LogPath)"
     }
 }

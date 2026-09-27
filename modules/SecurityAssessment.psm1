@@ -100,6 +100,8 @@ function Select-ProbeField {
 }
 
 function Get-OptionalFeatureState {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseCompatibleCommands', '',
+        Justification = 'DISM and BitLocker cmdlets are absent from the PSSA PowerShell 7.0 profile but work in PowerShell 7 on Windows client and on the CI runner (verified by the -Assess step). Probes check Get-Command first.')]
     [CmdletBinding()]
     [OutputType([string])]
     param([Parameter(Mandatory)][string]$FeatureName)
@@ -120,6 +122,8 @@ function Get-SecuritySnapshot {
     .SYNOPSIS
         Collects the read-only system state used by every control.
     #>
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseCompatibleCommands', '',
+        Justification = 'DISM and BitLocker cmdlets are absent from the PSSA PowerShell 7.0 profile but work in PowerShell 7 on Windows client and on the CI runner (verified by the -Assess step). Probes check Get-Command first.')]
     [CmdletBinding()]
     param()
     $snapshot = @{}

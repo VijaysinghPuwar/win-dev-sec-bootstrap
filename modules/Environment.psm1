@@ -214,6 +214,8 @@ function Enable-WslPrerequisite {
         Enables the two optional features WSL2 needs. Already-enabled features
         are reported as Current and left alone.
     #>
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseCompatibleCommands', '',
+        Justification = 'DISM and BitLocker cmdlets are absent from the PSSA PowerShell 7.0 profile but work in PowerShell 7 on Windows client and on the CI runner (verified by the -Assess step).')]
     [CmdletBinding(SupportsShouldProcess)]
     param()
     $newResult = {
