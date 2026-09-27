@@ -1,272 +1,174 @@
 <#
 .SYNOPSIS
-  Windows Dev + Security Bootstrap (PS 5.1/7+). Idempotent, parameterized.
+    Windows developer and security workstation bootstrap.
 
-.EXAMPLE
-  .\bootstrap-dev-sec.ps1 -Mode Full -WithWSL -WithDocker
+.DESCRIPTION
+    Installs a configurable tool catalog (config/packages.json) with winget,
+    pipx and the VS Code CLI. Safe to re-run: installed packages are detected
+    with exact ids and only upgraded, the session PATH is refreshed so tools
+    installed earlier in the run are usable later in the same run, and the
+    PowerShell profile is edited only inside a marked block.
 
 .PARAMETER Mode
-  Lite  : core tools only (fast)
-  Full  : everything (languages, RE tools, QoL)
-  Sec   : focus on cybersecurity tooling + essentials
+    Lite: Core, NetDebug, QoL. Sec: adds SecTools. Full: adds DevLangs and Cloud.
+
+.PARAMETER Only
+    Provision exactly these categories. Cannot be combined with -Mode, -Include or -Skip.
+
+.PARAMETER Include
+    Add categories to the mode, for example the opt-in Containers or MalwareAnalysis.
+
+.PARAMETER Skip
+    Remove categories from the mode.
 
 .PARAMETER WithWSL
-  Enable WSL2 + virtualization features (requires reboot to finalize).
+    Enable the WSL and VirtualMachinePlatform optional features (restart required).
 
 .PARAMETER WithDocker
-  Install Docker Desktop (large; optional).
+    Shorthand for -Include Containers.
+
+.PARAMETER SkipUpgrade
+    Leave already-installed packages at their current version.
+
+.PARAMETER SkipProfile
+    Do not modify PowerShell profiles.
+
+.PARAMETER DryRun
+    Print the plan and exit without running winget, pipx, code or changing
+    the system. Does not require Administrator. -WhatIf behaves the same way.
 
 .PARAMETER LogPath
-  Where to write a transcript log (default: Desktop\bootstrap.log).
+    Transcript path. Defaults to logs\bootstrap-<timestamp>.log next to this script.
+
+.EXAMPLE
+    .\bootstrap-dev-sec.ps1 -Mode Sec -DryRun
+
+.EXAMPLE
+    .\bootstrap-dev-sec.ps1 -Mode Full -Skip Cloud -WithWSL
+
+.NOTES
+    Exit codes: 0 success, 1 fatal error (invalid arguments, missing
+    prerequisite, not elevated), 2 completed with one or more failures.
 #>
-
-[CmdletBinding()]
+[CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'Provision')]
 param(
-  [ValidateSet('Lite','Full','Sec')]
-  [string]$Mode = 'Full',
-  [switch]$WithWSL,
-  [switch]$WithDocker,
-  [string]$LogPath = "$env:USERPROFILE\Desktop\bootstrap.log"
+    [Parameter(ParameterSetName = 'Provision')]
+    [ValidateSet('Lite', 'Sec', 'Full')]
+    [string]$Mode = 'Full',
+
+    [Parameter(ParameterSetName = 'Provision')][string[]]$Only = @(),
+    [Parameter(ParameterSetName = 'Provision')][string[]]$Include = @(),
+    [Parameter(ParameterSetName = 'Provision')][string[]]$Skip = @(),
+    [Parameter(ParameterSetName = 'Provision')][switch]$WithWSL,
+    [Parameter(ParameterSetName = 'Provision')][switch]$WithDocker,
+    [Parameter(ParameterSetName = 'Provision')][switch]$SkipUpgrade,
+    [Parameter(ParameterSetName = 'Provision')][switch]$SkipProfile,
+    [Parameter(ParameterSetName = 'Provision')][switch]$DryRun,
+
+    [string]$LogPath
 )
 
-# --- Guard: Admin check ---
-$IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
-).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $IsAdmin) {
-  Write-Host "[!] Please run this script in an ELEVATED (Administrator) PowerShell." -ForegroundColor Yellow
-  break
+Set-StrictMode -Version 2.0
+$ErrorActionPreference = 'Stop'
+
+$ExitSuccess = 0
+$ExitFatal = 1
+$ExitPartial = 2
+
+# Captured here because $PSBoundParameters inside a function refers to that function.
+$ModeSpecified = $PSBoundParameters.ContainsKey('Mode')
+
+foreach ($module in @('Common', 'PackageManager', 'Environment', 'Reporting')) {
+    Import-Module (Join-Path (Join-Path $PSScriptRoot 'modules') "$module.psm1") -Force
 }
 
-# --- Safer execution ---
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force | Out-Null
+function Invoke-Provisioning {
+    $catalog = Import-PackageCatalog -Path (Join-Path (Join-Path $PSScriptRoot 'config') 'packages.json')
+    $includeList = @($Include)
+    if ($WithDocker) { $includeList += 'Containers' }
+    $categories = @(Resolve-CategorySelection -Catalog $catalog -Mode $Mode -Only $Only -Include $includeList -Skip $Skip `
+        -ModeSpecified:$ModeSpecified)
+    $plan = @(Get-ProvisioningPlan -Catalog $catalog -Category $categories)
 
-# --- Logging ---
-try {
-  if (Test-Path $LogPath) { Remove-Item $LogPath -Force -ErrorAction SilentlyContinue }
-  Start-Transcript -Path $LogPath -Append | Out-Null
-} catch { Write-Host "[i] Could not start transcript log: $($_.Exception.Message)" -ForegroundColor Yellow }
+    $isDryRun = $DryRun -or $WhatIfPreference
+    Write-Status Info ("Categories: {0}" -f ($(if ($categories.Count) { $categories -join ', ' } else { '(none)' })))
 
-# --- Stopwatch for final timing ---
-$sw = [System.Diagnostics.Stopwatch]::StartNew()
-
-function Info($msg)  { Write-Host "→ $msg" -ForegroundColor Cyan }
-function Warn($msg)  { Write-Host "[!] $msg" -ForegroundColor Yellow }
-function Good($msg)  { Write-Host "✓ $msg" -ForegroundColor Green }
-
-# --- Winget presence ---
-if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-  Warn "winget not found. Install 'App Installer' from Microsoft Store, then re-run."
-  Stop-Transcript | Out-Null
-  break
-}
-
-# --- Install helper: idempotent ---
-function Install-App {
-  param([Parameter(Mandatory=$true)][string]$Id)
-  $pkg = winget list --id $Id --accept-source-agreements --disable-interactivity 2>$null
-  if ($LASTEXITCODE -eq 0 -and $pkg) {
-    Info "Upgrading $Id (if needed)..."
-    winget upgrade --id $Id --accept-package-agreements --accept-source-agreements --disable-interactivity | Out-Null
-  } else {
-    Info "Installing $Id..."
-    winget install --id $Id --silent --accept-package-agreements --accept-source-agreements --disable-interactivity | Out-Null
-  }
-}
-
-# --- Package sets ---
-$Core = @(
-  'Microsoft.PowerShell',          # PowerShell 7
-  'Microsoft.WindowsTerminal',
-  'Git.Git',
-  'Microsoft.VisualStudioCode',
-  '7zip.7zip',
-  'Microsoft.SysinternalsSuite',
-  'Sharkdp.Bat',
-  'junegunn.FZF',
-  'BurntSushi.ripgrep',
-  'JanDeDobbeleer.OhMyPosh'
-)
-
-$DevLangs = @(
-  'Python.Python.3.12',
-  'OpenJS.NodeJS.LTS',
-  'GoLang.Go',
-  'Rustlang.Rustup',
-  'EclipseAdoptium.Temurin.17.JDK',
-  'Microsoft.DotNet.SDK.8',
-  'RubyInstallerTeam.RubyWithDevKit',
-  'MSYS2.MSYS2',
-  'CMake.CMake'
-)
-
-$NetDebug = @(
-  'WiresharkFoundation.Wireshark',
-  'Nmap.Nmap',
-  'Postman.Postman',
-  'cURL.cURL'
-)
-
-$SecTools = @(
-  'PortSwigger.BurpSuite.Community',
-  'OWASP.ZAP',
-  'mitmproxy.mitmproxy',
-  'Progress.Fiddler.Classic',
-  'NSA.Ghidra',
-  'x64dbg.x64dbg',
-  'Hashcat.Hashcat'
-  # 'Rizin.Cutter' # optional
-)
-
-$QoL = @('Microsoft.PowerToys', 'GitHub.GitHubDesktop')
-
-# --- Mode selection ---
-$InstallQueue = @()
-switch ($Mode) {
-  'Lite' {
-    $InstallQueue += $Core + @('Python.Python.3.12') + $NetDebug + @('Nmap.Nmap') + $QoL
-  }
-  'Sec' {
-    $InstallQueue += $Core + $NetDebug + $SecTools + @('Python.Python.3.12') + $QoL
-  }
-  'Full' {
-    $InstallQueue += $Core + $DevLangs + $NetDebug + $SecTools + $QoL
-  }
-}
-
-if ($WithDocker) { $InstallQueue += 'Docker.DockerDesktop' }
-
-# --- Deduplicate ---
-$InstallQueue = $InstallQueue | Sort-Object -Unique
-
-# --- Install packages ---
-foreach ($id in $InstallQueue) { Install-App $id }
-
-# --- Optional: Enable WSL2/Virtualization ---
-if ($WithWSL) {
-  Info "Enabling WSL2 & virtualization features (reboot required to finalize)..."
-  dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart | Out-Null
-  dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart | Out-Null
-  dism.exe /online /enable-feature /featurename:HypervisorPlatform /all /norestart | Out-Null
-}
-
-# --- Python + pipx setup ---
-function Ensure-PythonAndPipx {
-  # Prefer Python launcher
-  $pyLauncher = Get-Command py -ErrorAction SilentlyContinue
-  $pythonCmd  = Get-Command python -ErrorAction SilentlyContinue
-
-  if ($pyLauncher) {
-    Info "Using Python launcher (py -3.12)..."
-    py -3.12 -m pip install --upgrade pip pipx
-    py -3.12 -m pipx ensurepath | Out-Null
-  } elseif ($pythonCmd) {
-    Info "Using python on PATH..."
-    python -m pip install --upgrade pip pipx
-    python -m pipx ensurepath | Out-Null
-  } else {
-    Warn "Python not on PATH; installing Python 3.12..."
-    Install-App 'Python.Python.3.12'
-    if (Get-Command py -ErrorAction SilentlyContinue) {
-      py -3.12 -m pip install --upgrade pip pipx
-      py -3.12 -m pipx ensurepath | Out-Null
-    } else {
-      python -m pip install --upgrade pip pipx
-      python -m pipx ensurepath | Out-Null
+    if (-not $isDryRun) {
+        if (-not (Test-IsWindowsPlatform)) { Write-Status Error 'Provisioning requires Windows. Use -DryRun to preview the plan on other platforms.'; return $ExitFatal }
+        if (-not (Test-IsAdministrator)) { Write-Status Error 'Run this script from an elevated (Administrator) PowerShell session, or use -DryRun.'; return $ExitFatal }
+        if (@($plan | Where-Object { $_.source -eq 'winget' }).Count -gt 0 -and -not (Test-WingetAvailable)) {
+            Write-Status Error "winget was not found. Install 'App Installer' from the Microsoft Store, then re-run."
+            return $ExitFatal
+        }
     }
-  }
 
-  # Ensure per-user .local\bin is visible now and next sessions
-  $UserBin = "$env:USERPROFILE\.local\bin"
-  if (!(Test-Path $UserBin)) { New-Item -ItemType Directory -Path $UserBin | Out-Null }
-  if ($env:Path -notlike "*$UserBin*") { $env:Path = "$env:Path;$UserBin" }
-  [Environment]::SetEnvironmentVariable("Path",
-    [System.Environment]::GetEnvironmentVariable("Path","User") + ";$UserBin", "User")
+    # Called by the package stage after winget installs and after pipx
+    # reports its bin directory; never called during a dry run.
+    $onPathChanged = {
+        param($ExtraEntry)
+        Update-SessionPath
+        if ($ExtraEntry) { Add-SessionPathEntry -Path $ExtraEntry }
+    }
+    $results = @(Invoke-PackageProvisioning -Plan $plan -DryRun:$isDryRun -SkipUpgrade:$SkipUpgrade -OnPathChanged $onPathChanged -Confirm:$false)
 
-  # Windows Store alias can hijack 'python'—recommend turning it off
-  Warn "If 'python' opens Microsoft Store, disable the 'python.exe' alias in Settings → Apps → Advanced app settings → App execution aliases."
+    if ($WithWSL) {
+        if ($isDryRun) {
+            $results += [pscustomobject]@{ Source = 'feature'; Category = 'WSL'; Name = 'Microsoft-Windows-Subsystem-Linux, VirtualMachinePlatform'; Id = ''; Status = 'Planned'; Detail = 'Would enable'; ExitCode = $null; RestartRequired = $true }
+        } else {
+            Write-Status Info 'Enabling WSL2 prerequisites'
+            $results += @(Enable-WslPrerequisite -Confirm:$false)
+        }
+    }
+
+    if (-not $SkipProfile) {
+        foreach ($profilePath in Get-ProfileTarget) {
+            $target = Protect-SensitiveText $profilePath
+            if ($isDryRun) {
+                Write-Status Plan "Would add or refresh the managed block in $target"
+                continue
+            }
+            $profileResult = Set-ManagedProfile -Path $profilePath -Confirm:$false
+            $level = if ($profileResult.Status -eq 'Failed') { 'Error' } else { 'Ok' }
+            Write-Status $level "Profile $($profileResult.Status): $target $(if ($profileResult.Backup) { "(backup: $(Protect-SensitiveText $profileResult.Backup))" })"
+            if ($profileResult.Status -eq 'Failed') {
+                $results += [pscustomobject]@{ Source = 'profile'; Category = 'Profile'; Name = $target; Id = ''; Status = 'Failed'; Detail = $profileResult.Detail; ExitCode = $null; RestartRequired = $false }
+            }
+        }
+    }
+
+    Write-ProvisioningSummary -Result $results
+    if ($WithWSL -and -not $isDryRun) {
+        Write-Status Info 'After restarting, install a distribution, for example: wsl --install -d Ubuntu'
+    }
+    if (@($results | Where-Object { $_.Status -eq 'Failed' }).Count -gt 0) { return $ExitPartial }
+    $ExitSuccess
 }
 
-# --- Pipx toolsets (install via isolated venvs) ---
-function Install-PipxTools {
-  param([string[]]$Tools)
-  foreach ($t in $Tools) {
-    Info "pipx install $t"
-    cmd /c "pipx install $t" | Out-Null
-  }
+if (-not $LogPath) {
+    $LogPath = Join-Path (Join-Path $PSScriptRoot 'logs') ('bootstrap-{0}.log' -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+}
+$transcriptStarted = $false
+try {
+    New-Item -ItemType Directory -Path (Split-Path $LogPath -Parent) -Force -WhatIf:$false | Out-Null
+    Start-Transcript -Path $LogPath -WhatIf:$false | Out-Null
+    $transcriptStarted = $true
+} catch {
+    Write-Status Warn "Could not start transcript: $($_.Exception.Message)"
 }
 
-# Always ensure pipx if Python was installed
-Ensure-PythonAndPipx
-
-# Pipx: base dev + security set depending on mode
-$PipxBase = @('poetry','httpie')
-$PipxSec  = @('bandit','mitmproxy','sqlmap','yara-python','volatility3')
-
-switch ($Mode) {
-  'Lite' { Install-PipxTools -Tools ($PipxBase + 'bandit') }
-  'Sec'  { Install-PipxTools -Tools ($PipxBase + $PipxSec) }
-  'Full' { Install-PipxTools -Tools ($PipxBase + $PipxSec) }
+$stopwatch = [Diagnostics.Stopwatch]::StartNew()
+$exitCode = $ExitFatal
+try {
+    $exitCode = Invoke-Provisioning
+} catch {
+    Write-Status Error $_.Exception.Message
+    $exitCode = $ExitFatal
+} finally {
+    $stopwatch.Stop()
+    Write-Status Info ('Finished in {0:hh\:mm\:ss} with exit code {1}' -f $stopwatch.Elapsed, $exitCode)
+    if ($transcriptStarted) {
+        Stop-Transcript -WhatIf:$false | Out-Null
+        Write-Status Info "Log: $(Protect-SensitiveText $LogPath)"
+    }
 }
-
-# Optional extra malware-analysis pack (comment in if you want by default)
-# Install-PipxTools -Tools @('capa','floss','oletools','lief','speakeasy-emulator')
-
-# --- VS Code extensions ---
-function Install-CodeExtensions {
-  $codeCmd = Get-Command code -ErrorAction SilentlyContinue
-  if (-not $codeCmd) { Warn "VS Code 'code' CLI not found on PATH; skipping extensions."; return }
-
-  $ext = @(
-    'ms-python.python','ms-python.vscode-pylance','ms-vscode.powershell','ms-vscode.cpptools',
-    'golang.go','rust-lang.rust-analyzer','redhat.java','ms-azuretools.vscode-docker',
-    'GitHub.vscode-pull-request-github','ms-vscode.vscode-node-azure-pack',
-    'Gruntfuggly.todo-tree','oderwat.indent-rainbow','eamodio.gitlens',
-    'kevinrose.vsc-python-indent','sonarsource.sonarlint-vscode',
-    'tamasfe.even-better-toml','VisualStudioExptTeam.vscodeintellicode'
-  )
-  foreach ($e in $ext) {
-    Info "VS Code ext: $e"
-    code --install-extension $e --force | Out-Null
-  }
-}
-Install-CodeExtensions
-
-# --- PowerShell profile (nicer prompt, history, aliases) ---
-function Setup-PowerShellProfile {
-  if ($PSVersionTable.PSEdition -eq 'Core') {
-    $profilePath = $PROFILE
-  } else {
-    $profilePath = "$HOME\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1"
-  }
-  New-Item -ItemType Directory -Force (Split-Path $profilePath) | Out-Null
-  if (-not (Test-Path $profilePath)) { New-Item $profilePath -ItemType File | Out-Null }
-
-  @'
-# ===== Developer-friendly PowerShell =====
-try { Import-Module PSReadLine } catch {}
-Set-PSReadLineOption -PredictionSource History -PredictionViewStyle ListView
-Set-PSReadLineOption -EditMode Windows
-
-# Prompt
-oh-my-posh init pwsh --config "$(oh-my-posh print-shell -c)" | Invoke-Expression
-
-# Aliases
-Set-Alias ll Get-ChildItem
-Set-Alias cat bat
-Set-Alias grep rg
-'@ | Out-File -FilePath $profilePath -Encoding utf8
-  Good "PowerShell profile updated: $profilePath"
-}
-Setup-PowerShellProfile
-
-# --- Final notes & timing ---
-$sw.Stop()
-Good "Bootstrap complete in $($sw.Elapsed.ToString())."
-if ($WithWSL) {
-  Warn "WSL/Virtualization changes require a REBOOT to finalize. After reboot, run:"
-  Write-Host "   wsl --install -d Ubuntu"
-  Write-Host "   wsl --install -d kali-linux"
-}
-
-try { Stop-Transcript | Out-Null } catch {}
-Good "Log saved to: $LogPath"
+exit $exitCode

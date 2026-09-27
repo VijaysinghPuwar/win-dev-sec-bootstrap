@@ -1,0 +1,19 @@
+# Run output: transcripts, assessment reports and remediation backups contain
+# machine-specific data and must not be committed.
+logs/
+reports/
+backup/
+
+# Profile backups written next to a test profile
+*.bak-*
+
+# Pester / analyzer output
+testResults.xml
+coverage.xml
+*.sarif
+
+# Editor and OS noise
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
