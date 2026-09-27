@@ -209,3 +209,25 @@ Describe 'Test-BackupValue' {
         Test-BackupValue -Handler (Get-RemediationHandler -ControlId $Id) -Value $Value | Should -BeFalse
     }
 }
+
+Describe 'Protect-BackupDirectory' {
+    # Set-Acl and DirectorySecurity exist only on Windows; CI runs this there.
+    It 'creates the directory and applies a protected ACL on Windows' -Skip:([Environment]::OSVersion.Platform -ne 'Win32NT') {
+        Mock -ModuleName Remediation Test-IsWindowsPlatform { $true }
+        Mock -ModuleName Remediation Set-Acl { $script:appliedAcl = $AclObject }
+        $dir = Join-Path $TestDrive 'protected-backup'
+        Protect-BackupDirectory -Path $dir
+        Test-Path -LiteralPath $dir | Should -BeTrue
+        Should -Invoke -ModuleName Remediation Set-Acl -Times 1
+        $script:appliedAcl.AreAccessRulesProtected | Should -BeTrue
+        $sids = @($script:appliedAcl.GetAccessRules($true, $false, [System.Security.Principal.SecurityIdentifier]) | ForEach-Object { $_.IdentityReference.Value })
+        $sids | Should -Be @('S-1-5-32-544', 'S-1-5-18')
+    }
+
+    It 'leaves an existing directory untouched' {
+        # Returns before any ACL work, so it must not throw on any platform.
+        Mock -ModuleName Remediation New-Item { throw 'must not create' }
+        { Protect-BackupDirectory -Path $TestDrive } | Should -Not -Throw
+        Should -Invoke -ModuleName Remediation New-Item -Times 0
+    }
+}

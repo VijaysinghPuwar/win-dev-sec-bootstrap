@@ -274,12 +274,37 @@ function New-RemediationBackup {
     }
 }
 
+function Protect-BackupDirectory {
+    <#
+    .SYNOPSIS
+        Creates the backup directory with an ACL that only Administrators and
+        SYSTEM can write, so a non-elevated process cannot plant values that
+        a later elevated -Rollback would write to the system.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param([Parameter(Mandatory)][string]$Path)
+    if (Test-Path -LiteralPath $Path) { return }
+    if (-not $PSCmdlet.ShouldProcess($Path, 'Create backup directory restricted to Administrators and SYSTEM')) { return }
+    New-Item -ItemType Directory -Path $Path -Force -ErrorAction Stop | Out-Null
+    if (-not (Test-IsWindowsPlatform)) { return }
+    $acl = New-Object System.Security.AccessControl.DirectorySecurity
+    $acl.SetAccessRuleProtection($true, $false)
+    $inherit = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+    foreach ($sid in @('S-1-5-32-544', 'S-1-5-18')) {
+        $identity = New-Object System.Security.Principal.SecurityIdentifier $sid
+        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule ($identity, 'FullControl', $inherit, 'None', 'Allow')
+        $acl.AddAccessRule($rule)
+    }
+    Set-Acl -LiteralPath $Path -AclObject $acl -ErrorAction Stop
+}
+
 function Save-RemediationBackup {
     # No ShouldProcess on purpose: the backup is only written for a change
     # that was already confirmed, and must never be skipped by -WhatIf/-Confirm
     # preferences leaking in from the caller.
     [CmdletBinding()]
     param([Parameter(Mandatory)][System.Collections.IDictionary]$Backup, [Parameter(Mandatory)][string]$Path)
+    Protect-BackupDirectory -Path (Split-Path -Path $Path -Parent) -WhatIf:$false -Confirm:$false
     Write-JsonFile -Path $Path -InputObject $Backup -WhatIf:$false -Confirm:$false
 }
 
@@ -455,4 +480,4 @@ function Invoke-SecurityRollback {
 
 Export-ModuleMember -Function Get-RemediableControlId, Get-RemediationHandler, Test-RemediationCoverage, Test-RollbackSupported,
     Get-RemediationState, Set-RemediationState, Test-RemediationState, Test-BackupValue, Restore-RemediationState,
-    New-RemediationBackup, Save-RemediationBackup, Read-RemediationBackup, Invoke-SecurityRemediation, Invoke-SecurityRollback
+    New-RemediationBackup, Protect-BackupDirectory, Save-RemediationBackup, Read-RemediationBackup, Invoke-SecurityRemediation, Invoke-SecurityRollback

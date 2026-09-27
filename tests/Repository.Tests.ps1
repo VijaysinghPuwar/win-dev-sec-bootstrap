@@ -45,3 +45,11 @@ Describe 'PowerShell source files' {
         @($bytes | Where-Object { $_ -gt 127 }).Count | Should -Be 0
     }
 }
+
+Describe 'Generated documentation' {
+    It 'docs/CONTROLS.md matches config/controls.json (run tools/New-ControlDoc.ps1)' {
+        $expected = & (Join-Path (Join-Path $repoRoot 'tools') 'New-ControlDoc.ps1') -PassThru
+        $actual = [IO.File]::ReadAllText((Join-Path (Join-Path $repoRoot 'docs') 'CONTROLS.md'))
+        ($actual -replace "`r`n", "`n") | Should -BeExactly $expected
+    }
+}

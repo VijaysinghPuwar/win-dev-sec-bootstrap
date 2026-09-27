@@ -10,6 +10,10 @@ BeforeAll {
 
     function Invoke-Bootstrap([string[]]$Arguments) {
         $log = Join-Path $TestDrive ("cli-{0}.log" -f [guid]::NewGuid())
+        # Windows PowerShell 5.1 turns a child's stderr into a terminating error
+        # when the preference is Stop (as it is under Pester); exit codes are
+        # what these tests check, so collect stderr as text instead.
+        $ErrorActionPreference = 'Continue'
         $output = & $engine -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script @Arguments -LogPath $log 2>&1 | Out-String
         [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $output }
     }
