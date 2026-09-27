@@ -1,0 +1,387 @@
+{
+  "schemaVersion": 1,
+  "referenceNote": "NIST SP 800-53 Rev. 5 control families and MITRE ATT&CK IDs are listed only where the relationship was checked against the source. CIS Benchmark item numbers are intentionally omitted because they change between benchmark versions and could not be verified against a licensed copy.",
+  "controls": [
+    {
+      "id": "WIN-DEF-001",
+      "name": "Microsoft Defender real-time protection is on",
+      "category": "Microsoft Defender",
+      "severity": "High",
+      "expected": "Real-time protection enabled",
+      "rationale": "Real-time protection scans files and processes as they are accessed. Without it, Defender only detects malware during scheduled or manual scans.",
+      "remediation": { "type": "Automated", "guidance": "Set-MpPreference -DisableRealtimeMonitoring $false" },
+      "references": {
+        "nist80053": ["SI-3"],
+        "attack": [],
+        "microsoft": ["https://learn.microsoft.com/en-us/defender-endpoint/configure-real-time-protection-microsoft-defender-antivirus"]
+      }
+    },
+    {
+      "id": "WIN-DEF-002",
+      "name": "Microsoft Defender behavior monitoring is on",
+      "category": "Microsoft Defender",
+      "severity": "Medium",
+      "expected": "Behavior monitoring enabled",
+      "rationale": "Behavior monitoring detects suspicious process activity that signature scanning alone misses.",
+      "remediation": { "type": "Automated", "guidance": "Set-MpPreference -DisableBehaviorMonitoring $false" },
+      "references": {
+        "nist80053": ["SI-3"],
+        "attack": [],
+        "microsoft": ["https://learn.microsoft.com/en-us/defender-endpoint/behavior-monitor"]
+      }
+    },
+    {
+      "id": "WIN-DEF-003",
+      "name": "Microsoft Defender cloud-delivered protection is on",
+      "category": "Microsoft Defender",
+      "severity": "Medium",
+      "expected": "MAPS reporting Basic or Advanced",
+      "rationale": "Cloud-delivered protection lets Defender query Microsoft's cloud service to block new threats before signatures are published.",
+      "remediation": { "type": "Automated", "guidance": "Set-MpPreference -MAPSReporting Advanced" },
+      "references": {
+        "nist80053": ["SI-3"],
+        "attack": [],
+        "microsoft": ["https://learn.microsoft.com/en-us/defender-endpoint/cloud-protection-microsoft-defender-antivirus"]
+      }
+    },
+    {
+      "id": "WIN-DEF-004",
+      "name": "Potentially unwanted application (PUA) blocking is on",
+      "category": "Microsoft Defender",
+      "severity": "Low",
+      "expected": "PUAProtection = Enabled (1)",
+      "rationale": "PUA protection blocks adware, bundlers and similar software that is not classified as malware.",
+      "remediation": { "type": "Automated", "guidance": "Set-MpPreference -PUAProtection Enabled" },
+      "references": {
+        "nist80053": ["SI-3"],
+        "attack": [],
+        "microsoft": ["https://learn.microsoft.com/en-us/defender-endpoint/detect-block-potentially-unwanted-apps-microsoft-defender-antivirus"]
+      }
+    },
+    {
+      "id": "WIN-DEF-005",
+      "name": "Microsoft Defender network protection is in block mode",
+      "category": "Microsoft Defender",
+      "severity": "Medium",
+      "expected": "EnableNetworkProtection = Enabled (1)",
+      "rationale": "Network protection blocks outbound connections to low-reputation and known-malicious domains from any process, not only the browser.",
+      "remediation": { "type": "Automated", "guidance": "Set-MpPreference -EnableNetworkProtection Enabled" },
+      "references": {
+        "nist80053": ["SI-3", "SC-7"],
+        "attack": [],
+        "microsoft": ["https://learn.microsoft.com/en-us/defender-endpoint/network-protection"]
+      }
+    },
+    {
+      "id": "WIN-DEF-006",
+      "name": "Microsoft Defender antivirus signatures are current",
+      "category": "Microsoft Defender",
+      "severity": "Medium",
+      "expected": "Signatures updated within 3 days (WARN up to 7 days)",
+      "rationale": "Stale signatures miss recent malware families. The 3 and 7 day thresholds are project defaults, not a vendor requirement.",
+      "remediation": { "type": "Automated", "guidance": "Update-MpSignature" },
+      "references": {
+        "nist80053": ["SI-3"],
+        "attack": [],
+        "microsoft": []
+      }
+    },
+    {
+      "id": "WIN-DEF-007",
+      "name": "Microsoft Defender tamper protection is on",
+      "category": "Microsoft Defender",
+      "severity": "Medium",
+      "expected": "IsTamperProtected = True",
+      "rationale": "Tamper protection stops local processes, including malware running as administrator, from turning off Defender features.",
+      "remediation": { "type": "Manual", "guidance": "Turn on Tamper Protection in Windows Security > Virus & threat protection settings, or through Intune. It cannot be changed with PowerShell by design." },
+      "references": {
+        "nist80053": ["SI-3"],
+        "attack": ["T1685"],
+        "microsoft": ["https://learn.microsoft.com/en-us/defender-endpoint/prevent-changes-to-security-settings-with-tamper-protection"]
+      }
+    },
+    {
+      "id": "WIN-DEF-008",
+      "name": "No high-risk Microsoft Defender exclusions",
+      "category": "Microsoft Defender",
+      "severity": "High",
+      "expected": "No exclusions for drive roots, temp or download folders, script hosts or executable file types",
+      "rationale": "Broad exclusions create blind spots. Attackers add Defender exclusions to hide payloads, and overly wide developer exclusions have the same effect.",
+      "remediation": { "type": "Manual", "guidance": "Review each exclusion and remove it with Remove-MpPreference -ExclusionPath/-ExclusionProcess/-ExclusionExtension. Exclusions are never removed automatically because they are often needed by build tools." },
+      "references": {
+        "nist80053": ["SI-3"],
+        "attack": ["T1685"],
+        "microsoft": [
+          "https://learn.microsoft.com/en-us/defender-endpoint/configure-exclusions-microsoft-defender-antivirus",
+          "https://learn.microsoft.com/en-us/defender-endpoint/common-exclusion-mistakes-microsoft-defender-antivirus"
+        ]
+      }
+    },
+    {
+      "id": "WIN-DEF-009",
+      "name": "Attack surface reduction rules are configured",
+      "category": "Microsoft Defender",
+      "severity": "Medium",
+      "expected": "At least one ASR rule in Block or Warn mode",
+      "rationale": "ASR rules block common malware behaviors such as Office spawning child processes or credential theft from LSASS.",
+      "remediation": { "type": "Manual", "guidance": "Deploy rules in Audit mode first and review events before switching to Block, because ASR rules can interfere with developer tools. See the ASR rules reference." },
+      "references": {
+        "nist80053": ["SI-3"],
+        "attack": ["M1040"],
+        "microsoft": ["https://learn.microsoft.com/en-us/defender-endpoint/attack-surface-reduction-rules-reference"]
+      }
+    },
+    {
+      "id": "WIN-DEF-010",
+      "name": "Controlled folder access is on",
+      "category": "Microsoft Defender",
+      "severity": "Low",
+      "expected": "EnableControlledFolderAccess = Enabled (1)",
+      "rationale": "Controlled folder access stops untrusted applications from modifying files in protected folders, which limits ransomware damage.",
+      "remediation": { "type": "Manual", "guidance": "Enable in Windows Security > Ransomware protection after allow-listing the development tools you use; it frequently blocks compilers and package managers." },
+      "references": {
+        "nist80053": ["SI-3"],
+        "attack": [],
+        "microsoft": ["https://learn.microsoft.com/en-us/defender-endpoint/controlled-folders"]
+      }
+    },
+    {
+      "id": "WIN-FW-001",
+      "name": "Windows Firewall Domain profile is on and blocks unsolicited inbound traffic",
+      "category": "Windows Firewall",
+      "severity": "High",
+      "expected": "Enabled = True, DefaultInboundAction = Block",
+      "rationale": "The host firewall is the last network control on a device that roams between networks.",
+      "remediation": { "type": "Automated", "guidance": "Set-NetFirewallProfile -Profile Domain -Enabled True -DefaultInboundAction Block" },
+      "references": {
+        "nist80053": ["SC-7"],
+        "attack": [],
+        "microsoft": ["https://learn.microsoft.com/en-us/windows/security/operating-system-security/network-security/windows-firewall/"]
+      }
+    },
+    {
+      "id": "WIN-FW-002",
+      "name": "Windows Firewall Private profile is on and blocks unsolicited inbound traffic",
+      "category": "Windows Firewall",
+      "severity": "High",
+      "expected": "Enabled = True, DefaultInboundAction = Block",
+      "rationale": "The host firewall is the last network control on a device that roams between networks.",
+      "remediation": { "type": "Automated", "guidance": "Set-NetFirewallProfile -Profile Private -Enabled True -DefaultInboundAction Block" },
+      "references": {
+        "nist80053": ["SC-7"],
+        "attack": [],
+        "microsoft": ["https://learn.microsoft.com/en-us/windows/security/operating-system-security/network-security/windows-firewall/"]
+      }
+    },
+    {
+      "id": "WIN-FW-003",
+      "name": "Windows Firewall Public profile is on and blocks unsolicited inbound traffic",
+      "category": "Windows Firewall",
+      "severity": "High",
+      "expected": "Enabled = True, DefaultInboundAction = Block",
+      "rationale": "The Public profile applies on untrusted networks such as hotel and airport Wi-Fi.",
+      "remediation": { "type": "Automated", "guidance": "Set-NetFirewallProfile -Profile Public -Enabled True -DefaultInboundAction Block" },
+      "references": {
+        "nist80053": ["SC-7"],
+        "attack": [],
+        "microsoft": ["https://learn.microsoft.com/en-us/windows/security/operating-system-security/network-security/windows-firewall/"]
+      }
+    },
+    {
+      "id": "WIN-SMB-001",
+      "name": "SMBv1 server protocol is disabled",
+      "category": "Network Protocols",
+      "severity": "High",
+      "expected": "EnableSMB1Protocol = False",
+      "rationale": "SMBv1 lacks modern integrity protections and was the transport for EternalBlue (MS17-010) exploitation.",
+      "remediation": { "type": "Automated", "guidance": "Set-SmbServerConfiguration -EnableSMB1Protocol $false -Force" },
+      "references": {
+        "nist80053": ["CM-7"],
+        "attack": ["T1210", "M1042"],
+        "microsoft": ["https://learn.microsoft.com/en-us/windows-server/storage/file-server/troubleshoot/detect-enable-and-disable-smbv1-v2-v3"]
+      }
+    },
+    {
+      "id": "WIN-SMB-002",
+      "name": "SMBv1 optional feature is removed",
+      "category": "Network Protocols",
+      "severity": "High",
+      "expected": "SMB1Protocol feature Disabled or not present",
+      "rationale": "Removing the feature removes both the SMBv1 client and server components, not only the server setting.",
+      "remediation": { "type": "Manual", "guidance": "Disable-WindowsOptionalFeature -Online -FeatureName SMB1Protocol -NoRestart, then restart. Not automated because it needs a restart before it can be verified." },
+      "references": {
+        "nist80053": ["CM-7"],
+        "attack": ["T1210", "M1042"],
+        "microsoft": ["https://learn.microsoft.com/en-us/windows-server/storage/file-server/troubleshoot/detect-enable-and-disable-smbv1-v2-v3"]
+      }
+    },
+    {
+      "id": "WIN-SMB-003",
+      "name": "SMB server requires signing",
+      "category": "Network Protocols",
+      "severity": "Medium",
+      "expected": "RequireSecuritySignature = True",
+      "rationale": "Required SMB signing prevents NTLM relay attacks against this host's file shares.",
+      "remediation": { "type": "Manual", "guidance": "Set-SmbServerConfiguration -RequireSecuritySignature $true -Force. Test first: very old SMB clients and some NAS devices cannot sign." },
+      "references": {
+        "nist80053": ["SC-8"],
+        "attack": ["T1557.001"],
+        "microsoft": ["https://learn.microsoft.com/en-us/windows-server/storage/file-server/smb-signing-overview"]
+      }
+    },
+    {
+      "id": "WIN-NET-001",
+      "name": "LLMNR multicast name resolution is disabled",
+      "category": "Network Protocols",
+      "severity": "Medium",
+      "expected": "Policy EnableMulticast = 0",
+      "rationale": "LLMNR answers can be spoofed by anyone on the local network to capture NTLM credentials (Responder-style poisoning).",
+      "remediation": { "type": "Automated", "guidance": "Set HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows NT\\DNSClient EnableMulticast (DWORD) to 0" },
+      "references": {
+        "nist80053": ["CM-7"],
+        "attack": ["T1557.001"],
+        "microsoft": []
+      }
+    },
+    {
+      "id": "WIN-PS-001",
+      "name": "PowerShell script block logging is on",
+      "category": "PowerShell Logging",
+      "severity": "Medium",
+      "expected": "Policy EnableScriptBlockLogging = 1",
+      "rationale": "Script block logging records deobfuscated PowerShell code in event 4104, which is the main evidence source for PowerShell-based attacks. Logged code can include secrets typed into scripts, so restrict access to the PowerShell Operational log.",
+      "remediation": { "type": "Automated", "guidance": "Set HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\PowerShell\\ScriptBlockLogging EnableScriptBlockLogging (DWORD) to 1" },
+      "references": {
+        "nist80053": ["AU-2", "AU-12"],
+        "attack": ["T1059.001"],
+        "microsoft": ["https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_logging_windows"]
+      }
+    },
+    {
+      "id": "WIN-PS-002",
+      "name": "PowerShell module logging is on",
+      "category": "PowerShell Logging",
+      "severity": "Low",
+      "expected": "Policy EnableModuleLogging = 1",
+      "rationale": "Module logging records pipeline execution details (event 4103). It is noisy, so it is reported as a recommendation rather than a failure.",
+      "remediation": { "type": "Manual", "guidance": "Enable 'Turn on Module Logging' in Group Policy and choose module names deliberately to control log volume." },
+      "references": {
+        "nist80053": ["AU-2", "AU-12"],
+        "attack": ["T1059.001"],
+        "microsoft": ["https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_logging_windows"]
+      }
+    },
+    {
+      "id": "WIN-PS-003",
+      "name": "PowerShell transcription is on",
+      "category": "PowerShell Logging",
+      "severity": "Info",
+      "expected": "Policy EnableTranscripting = 1",
+      "rationale": "Transcripts capture full session input and output, including any secrets displayed. Enable only with a protected output directory. Reported for visibility only.",
+      "remediation": { "type": "Manual", "guidance": "Enable 'Turn on PowerShell Transcription' with an OutputDirectory that users cannot read or modify." },
+      "references": {
+        "nist80053": ["AU-12"],
+        "attack": ["T1059.001"],
+        "microsoft": ["https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_logging_windows"]
+      }
+    },
+    {
+      "id": "WIN-PS-004",
+      "name": "Windows PowerShell 2.0 engine is removed",
+      "category": "PowerShell Logging",
+      "severity": "Medium",
+      "expected": "MicrosoftWindowsPowerShellV2Root feature Disabled or not present",
+      "rationale": "The 2.0 engine predates script block logging and AMSI, so launching it (powershell -Version 2) bypasses both.",
+      "remediation": { "type": "Manual", "guidance": "Disable-WindowsOptionalFeature -Online -FeatureName MicrosoftWindowsPowerShellV2Root -NoRestart. Not automated because feature changes need a restart before verification." },
+      "references": {
+        "nist80053": ["CM-7"],
+        "attack": ["M1042"],
+        "microsoft": []
+      }
+    },
+    {
+      "id": "WIN-BL-001",
+      "name": "BitLocker protects the operating system drive",
+      "category": "Data Protection",
+      "severity": "High",
+      "expected": "ProtectionStatus = On",
+      "rationale": "Without disk encryption, anyone with physical access to a lost or stolen device can read its data.",
+      "remediation": { "type": "Manual", "guidance": "Enable BitLocker from Control Panel or manage-bde after saving the recovery key somewhere safe. Never enabled automatically: a lost recovery key means lost data." },
+      "references": {
+        "nist80053": ["SC-28"],
+        "attack": [],
+        "microsoft": ["https://learn.microsoft.com/en-us/windows/security/operating-system-security/data-protection/bitlocker/"]
+      }
+    },
+    {
+      "id": "WIN-SYS-001",
+      "name": "User Account Control is on",
+      "category": "System Hardening",
+      "severity": "High",
+      "expected": "EnableLUA = 1",
+      "rationale": "With UAC off, every administrator process runs with a full token and malware inherits it without a prompt.",
+      "remediation": { "type": "Manual", "guidance": "Set EnableLUA to 1 under HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System and restart." },
+      "references": {
+        "nist80053": ["AC-6"],
+        "attack": ["T1548.002"],
+        "microsoft": ["https://learn.microsoft.com/en-us/windows/security/application-security/application-control/user-account-control/"]
+      }
+    },
+    {
+      "id": "WIN-SYS-002",
+      "name": "LSA protection (RunAsPPL) is on",
+      "category": "System Hardening",
+      "severity": "Medium",
+      "expected": "RunAsPPL = 1 or 2",
+      "rationale": "Running LSASS as a protected process blocks most user-mode credential dumping from LSASS memory.",
+      "remediation": { "type": "Manual", "guidance": "Follow Microsoft's LSA protection guidance: audit incompatible drivers and plug-ins first, then enable and restart." },
+      "references": {
+        "nist80053": [],
+        "attack": ["T1003.001"],
+        "microsoft": ["https://learn.microsoft.com/en-us/windows-server/security/credentials-protection-and-management/configuring-additional-lsa-protection"]
+      }
+    },
+    {
+      "id": "WIN-SYS-003",
+      "name": "Secure Boot is on",
+      "category": "System Hardening",
+      "severity": "Medium",
+      "expected": "Confirm-SecureBootUEFI = True",
+      "rationale": "Secure Boot only allows signed boot components to load, which blocks boot-level rootkits.",
+      "remediation": { "type": "Manual", "guidance": "Enable Secure Boot in the UEFI firmware settings." },
+      "references": {
+        "nist80053": ["SI-7"],
+        "attack": [],
+        "microsoft": ["https://learn.microsoft.com/en-us/windows-hardware/design/device-experiences/oem-secure-boot"]
+      }
+    },
+    {
+      "id": "WIN-ACC-001",
+      "name": "Built-in Guest account is disabled",
+      "category": "Accounts",
+      "severity": "Medium",
+      "expected": "Guest (RID 501) Enabled = False",
+      "rationale": "The Guest account allows unauthenticated-style local access and is a well-known default account.",
+      "remediation": { "type": "Automated", "guidance": "Disable-LocalUser -SID <machine SID>-501" },
+      "references": {
+        "nist80053": ["AC-2"],
+        "attack": ["T1078.001"],
+        "microsoft": []
+      }
+    },
+    {
+      "id": "WIN-RDP-001",
+      "name": "Remote Desktop is off or requires Network Level Authentication",
+      "category": "Remote Access",
+      "severity": "High",
+      "expected": "fDenyTSConnections = 1, or UserAuthentication = 1 when RDP is enabled",
+      "rationale": "Network Level Authentication requires credentials before a session is created, which reduces exposure to pre-authentication RDP vulnerabilities.",
+      "remediation": { "type": "Manual", "guidance": "Turn off Remote Desktop if unused, or enable 'Require devices to use Network Level Authentication' in Settings > System > Remote Desktop." },
+      "references": {
+        "nist80053": ["AC-17"],
+        "attack": ["T1021.001"],
+        "microsoft": ["https://learn.microsoft.com/en-us/windows-server/remote/remote-desktop-services/clients/remote-desktop-allow-access"]
+      }
+    }
+  ]
+}

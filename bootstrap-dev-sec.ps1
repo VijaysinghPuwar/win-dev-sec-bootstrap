@@ -1,13 +1,17 @@
 <#
 .SYNOPSIS
-    Windows developer and security workstation bootstrap.
+    Windows developer and security workstation bootstrap and security assessment.
 
 .DESCRIPTION
-    Installs a configurable tool catalog (config/packages.json) with winget,
-    pipx and the VS Code CLI. Safe to re-run: installed packages are detected
-    with exact ids and only upgraded, the session PATH is refreshed so tools
-    installed earlier in the run are usable later in the same run, and the
-    PowerShell profile is edited only inside a marked block.
+    Provisioning (default): installs a configurable tool catalog
+    (config/packages.json) with winget, pipx and the VS Code CLI. Safe to
+    re-run: installed packages are detected with exact ids and only upgraded,
+    the session PATH is refreshed so tools installed earlier in the run are
+    usable later in the same run, and the PowerShell profile is edited only
+    inside a marked block.
+
+    Assessment (-Assess): read-only evaluation of the Windows security
+    controls in config/controls.json, written to JSON and HTML reports.
 
 .PARAMETER Mode
     Lite: Core, NetDebug, QoL. Sec: adds SecTools. Full: adds DevLangs and Cloud.
@@ -37,6 +41,12 @@
     Print the plan and exit without running winget, pipx, code or changing
     the system. Does not require Administrator. -WhatIf behaves the same way.
 
+.PARAMETER Assess
+    Run the read-only security assessment instead of provisioning.
+
+.PARAMETER ReportDirectory
+    Where assessment reports are written. Defaults to reports\ next to this script.
+
 .PARAMETER LogPath
     Transcript path. Defaults to logs\bootstrap-<timestamp>.log next to this script.
 
@@ -45,6 +55,9 @@
 
 .EXAMPLE
     .\bootstrap-dev-sec.ps1 -Mode Full -Skip Cloud -WithWSL
+
+.EXAMPLE
+    .\bootstrap-dev-sec.ps1 -Assess
 
 .NOTES
     Exit codes: 0 success, 1 fatal error (invalid arguments, missing
@@ -65,6 +78,9 @@ param(
     [Parameter(ParameterSetName = 'Provision')][switch]$SkipProfile,
     [Parameter(ParameterSetName = 'Provision')][switch]$DryRun,
 
+    [Parameter(ParameterSetName = 'Assess', Mandatory)][switch]$Assess,
+    [Parameter(ParameterSetName = 'Assess')][string]$ReportDirectory,
+
     [string]$LogPath
 )
 
@@ -78,7 +94,7 @@ $ExitPartial = 2
 # Captured here because $PSBoundParameters inside a function refers to that function.
 $ModeSpecified = $PSBoundParameters.ContainsKey('Mode')
 
-foreach ($module in @('Common', 'PackageManager', 'Environment', 'Reporting')) {
+foreach ($module in @('Common', 'PackageManager', 'Environment', 'SecurityAssessment', 'Reporting')) {
     Import-Module (Join-Path (Join-Path $PSScriptRoot 'modules') "$module.psm1") -Force
 }
 
@@ -144,6 +160,26 @@ function Invoke-Provisioning {
     $ExitSuccess
 }
 
+function Get-ReportDirectory {
+    if ($ReportDirectory) { return $ReportDirectory }
+    Join-Path $PSScriptRoot 'reports'
+}
+
+function Invoke-Assessment {
+    if (-not (Test-IsWindowsPlatform)) { Write-Status Error 'The security assessment requires Windows.'; return $ExitFatal }
+    if (-not (Test-IsAdministrator)) {
+        Write-Status Warn 'Not elevated: controls that need Administrator rights (Defender exclusions, BitLocker, optional features) will report ERROR.'
+    }
+    $catalog = Import-ControlCatalog -Path (Join-Path (Join-Path $PSScriptRoot 'config') 'controls.json')
+    $findings = @(Invoke-SecurityAssessment -Catalog $catalog)
+    $report = New-AssessmentReport -Finding $findings
+    Write-AssessmentSummary -Report $report
+    $name = 'security-assessment-{0}' -f (Get-Date -Format 'yyyyMMdd-HHmmss')
+    $paths = Export-AssessmentReport -Report $report -Directory (Get-ReportDirectory) -BaseName $name -Confirm:$false -WhatIf:$false
+    Write-Status Ok "Reports: $(Protect-SensitiveText $paths.Json), $(Protect-SensitiveText $paths.Html)"
+    $ExitSuccess
+}
+
 if (-not $LogPath) {
     $LogPath = Join-Path (Join-Path $PSScriptRoot 'logs') ('bootstrap-{0}.log' -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
 }
@@ -159,7 +195,10 @@ try {
 $stopwatch = [Diagnostics.Stopwatch]::StartNew()
 $exitCode = $ExitFatal
 try {
-    $exitCode = Invoke-Provisioning
+    switch ($PSCmdlet.ParameterSetName) {
+        'Assess' { $exitCode = Invoke-Assessment }
+        default { $exitCode = Invoke-Provisioning }
+    }
 } catch {
     Write-Status Error $_.Exception.Message
     $exitCode = $ExitFatal
