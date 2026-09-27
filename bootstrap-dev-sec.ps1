@@ -13,6 +13,11 @@
     Assessment (-Assess): read-only evaluation of the Windows security
     controls in config/controls.json, written to JSON and HTML reports.
 
+    Remediation (-Remediate): assesses, then applies automated fixes for
+    failing controls. Each change is confirmed individually (use -WhatIf to
+    preview, -Confirm:$false for unattended runs), backed up first, and
+    verified afterwards. -Rollback restores the values from a backup file.
+
 .PARAMETER Mode
     Lite: Core, NetDebug, QoL. Sec: adds SecTools. Full: adds DevLangs and Cloud.
 
@@ -44,6 +49,18 @@
 .PARAMETER Assess
     Run the read-only security assessment instead of provisioning.
 
+.PARAMETER Remediate
+    Assess, then remediate failing controls that support automated remediation.
+
+.PARAMETER ControlId
+    Limit remediation to these control ids (for example WIN-PS-001).
+
+.PARAMETER Rollback
+    Restore the settings recorded in a remediation backup file.
+
+.PARAMETER BackupFile
+    Backup file for -Rollback. Defaults to the newest file in backup\.
+
 .PARAMETER ReportDirectory
     Where assessment reports are written. Defaults to reports\ next to this script.
 
@@ -58,6 +75,15 @@
 
 .EXAMPLE
     .\bootstrap-dev-sec.ps1 -Assess
+
+.EXAMPLE
+    .\bootstrap-dev-sec.ps1 -Remediate -WhatIf
+
+.EXAMPLE
+    .\bootstrap-dev-sec.ps1 -Remediate -ControlId WIN-PS-001,WIN-NET-001
+
+.EXAMPLE
+    .\bootstrap-dev-sec.ps1 -Rollback
 
 .NOTES
     Exit codes: 0 success, 1 fatal error (invalid arguments, missing
@@ -79,7 +105,16 @@ param(
     [Parameter(ParameterSetName = 'Provision')][switch]$DryRun,
 
     [Parameter(ParameterSetName = 'Assess', Mandatory)][switch]$Assess,
-    [Parameter(ParameterSetName = 'Assess')][string]$ReportDirectory,
+
+    [Parameter(ParameterSetName = 'Remediate', Mandatory)][switch]$Remediate,
+    [Parameter(ParameterSetName = 'Remediate')][string[]]$ControlId = @(),
+
+    [Parameter(ParameterSetName = 'Rollback', Mandatory)][switch]$Rollback,
+    [Parameter(ParameterSetName = 'Rollback')][string]$BackupFile,
+
+    [Parameter(ParameterSetName = 'Assess')]
+    [Parameter(ParameterSetName = 'Remediate')]
+    [string]$ReportDirectory,
 
     [string]$LogPath
 )
@@ -93,8 +128,12 @@ $ExitPartial = 2
 
 # Captured here because $PSBoundParameters inside a function refers to that function.
 $ModeSpecified = $PSBoundParameters.ContainsKey('Mode')
+# -WhatIf/-Confirm are forwarded explicitly: module functions do not inherit
+# this script's preference variables.
+$ShouldProcessArgs = @{ WhatIf = [bool]$WhatIfPreference }
+if ($PSBoundParameters.ContainsKey('Confirm')) { $ShouldProcessArgs['Confirm'] = [bool]$PSBoundParameters['Confirm'] }
 
-foreach ($module in @('Common', 'PackageManager', 'Environment', 'SecurityAssessment', 'Reporting')) {
+foreach ($module in @('Common', 'PackageManager', 'Environment', 'SecurityAssessment', 'Remediation', 'Reporting')) {
     Import-Module (Join-Path (Join-Path $PSScriptRoot 'modules') "$module.psm1") -Force
 }
 
@@ -180,6 +219,78 @@ function Invoke-Assessment {
     $ExitSuccess
 }
 
+function Get-BackupDirectory { Join-Path $PSScriptRoot 'backup' }
+
+function Test-RemediationPrerequisite {
+    if (-not (Test-IsWindowsPlatform)) { Write-Status Error 'Remediation and rollback require Windows.'; return $false }
+    if (-not (Test-IsAdministrator)) { Write-Status Error 'Remediation and rollback require an elevated (Administrator) PowerShell session.'; return $false }
+    $true
+}
+
+function Invoke-Remediation {
+    if (-not (Test-RemediationPrerequisite)) { return $ExitFatal }
+    $catalog = Import-ControlCatalog -Path (Join-Path (Join-Path $PSScriptRoot 'config') 'controls.json')
+    $coverage = @(Test-RemediationCoverage -Catalog $catalog)
+    if ($coverage.Count -gt 0) { throw "Remediation handlers do not match controls.json: $($coverage -join '; ')" }
+
+    $requested = @($ControlId | ForEach-Object { "$_" -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $unknown = @($requested | Where-Object { @($catalog.controls.id) -notcontains $_ })
+    if ($unknown.Count -gt 0) { Write-Status Error "Unknown control id(s): $($unknown -join ', ')"; return $ExitFatal }
+    $notAutomated = @($requested | Where-Object { @(Get-RemediableControlId) -notcontains $_ })
+    foreach ($id in $notAutomated) { Write-Status Warn "$id has no automated remediation; see its guidance in the report." }
+
+    $findings = @(Invoke-SecurityAssessment -Catalog $catalog)
+    $candidates = @($findings | Where-Object { $_.remediationAvailable -and ($requested.Count -eq 0 -or $requested -contains $_.id) })
+    if ($candidates.Count -eq 0) {
+        Write-Status Ok 'No failing control needs automated remediation.'
+        return $ExitSuccess
+    }
+    Write-Status Plan "Controls eligible for automated remediation ($($candidates.Count)):"
+    foreach ($f in $candidates) { Write-Status Detail "$($f.id) [$($f.status)] $($f.name) -> $($f.remediationGuidance)" }
+
+    $backupPath = Join-Path (Get-BackupDirectory) ('security-backup-{0}.json' -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    $results = @(Invoke-SecurityRemediation -Finding $candidates -BackupPath $backupPath @ShouldProcessArgs)
+    foreach ($r in $results) {
+        $level = @{ Remediated = 'Ok'; Failed = 'Error'; Skipped = 'Warn' }[$r.status]
+        Write-Status $level "$($r.status): $($r.controlId) - $($r.detail)"
+    }
+    if ($WhatIfPreference) { return $ExitSuccess }
+
+    if (Test-Path -LiteralPath $backupPath) { Write-Status Info "Backup of previous values: $(Protect-SensitiveText $backupPath)" }
+    $after = @(Invoke-SecurityAssessment -Catalog $catalog)
+    $report = New-AssessmentReport -Finding $after -Remediation $results -Kind PostRemediation
+    Write-AssessmentSummary -Report $report
+    $paths = Export-AssessmentReport -Report $report -Directory (Get-ReportDirectory) -BaseName ('security-remediation-{0}' -f (Get-Date -Format 'yyyyMMdd-HHmmss')) -Confirm:$false -WhatIf:$false
+    Write-Status Ok "Reports: $(Protect-SensitiveText $paths.Json), $(Protect-SensitiveText $paths.Html)"
+    if (@($results | Where-Object { $_.status -eq 'Failed' }).Count -gt 0) { return $ExitPartial }
+    $ExitSuccess
+}
+
+function Invoke-Rollback {
+    if (-not (Test-RemediationPrerequisite)) { return $ExitFatal }
+    $path = $BackupFile
+    if (-not $path) {
+        $latest = Get-ChildItem -Path (Get-BackupDirectory) -Filter 'security-backup-*.json' -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^security-backup-\d{8}-\d{6}\.json$' } | Sort-Object Name -Descending | Select-Object -First 1
+        if (-not $latest) { Write-Status Error 'No backup file found in backup\. Pass -BackupFile.'; return $ExitFatal }
+        $path = $latest.FullName
+    }
+    Write-Status Info "Rolling back from $(Protect-SensitiveText $path)"
+    $results = @(Invoke-SecurityRollback -BackupPath $path @ShouldProcessArgs)
+    if ($results.Count -eq 0) { Write-Status Ok 'The backup contains no changes to restore.' }
+    foreach ($r in $results) {
+        $level = @{ Restored = 'Ok'; Failed = 'Error'; Skipped = 'Warn' }[$r.status]
+        Write-Status $level "$($r.status): $($r.controlId) - $($r.detail)"
+    }
+    if (-not $WhatIfPreference -and $results.Count -gt 0) {
+        $resultPath = [IO.Path]::ChangeExtension($path, ('rollback-{0}.json' -f (Get-Date -Format 'yyyyMMdd-HHmmss')))
+        Write-JsonFile -Path $resultPath -InputObject @($results) -WhatIf:$false
+        Write-Status Info "Rollback record: $(Protect-SensitiveText $resultPath)"
+    }
+    if (@($results | Where-Object { $_.status -eq 'Failed' }).Count -gt 0) { return $ExitPartial }
+    $ExitSuccess
+}
+
 if (-not $LogPath) {
     $LogPath = Join-Path (Join-Path $PSScriptRoot 'logs') ('bootstrap-{0}.log' -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
 }
@@ -197,6 +308,8 @@ $exitCode = $ExitFatal
 try {
     switch ($PSCmdlet.ParameterSetName) {
         'Assess' { $exitCode = Invoke-Assessment }
+        'Remediate' { $exitCode = Invoke-Remediation }
+        'Rollback' { $exitCode = Invoke-Rollback }
         default { $exitCode = Invoke-Provisioning }
     }
 } catch {
