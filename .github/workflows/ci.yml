@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PESTER_VERSION: 5.9.1
+  PSSA_VERSION: 1.25.0
+
+jobs:
+  # Validates the code without provisioning the runner: no packages are
+  # installed, no security setting is changed. The only live checks against
+  # the runner are the read-only assessment and a -WhatIf remediation plan.
+  powershell-7:
+    name: PowerShell 7 (lint, tests, smoke)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Pester and PSScriptAnalyzer
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -RequiredVersion $env:PESTER_VERSION -Scope CurrentUser -Force -SkipPublisherCheck
+          Install-Module PSScriptAnalyzer -RequiredVersion $env:PSSA_VERSION -Scope CurrentUser -Force
+
+      - name: Validate JSON configuration
+        run: |
+          Import-Module ./modules/Common.psm1, ./modules/PackageManager.psm1, ./modules/SecurityAssessment.psm1, ./modules/Remediation.psm1
+          Import-PackageCatalog -Path ./config/packages.json | Out-Null
+          $controls = Import-ControlCatalog -Path ./config/controls.json
+          $coverage = @(Test-RemediationCoverage -Catalog $controls)
+          if ($coverage.Count) { throw ($coverage -join "`n") }
+          "packages.json and controls.json are valid"
+
+      - name: PSScriptAnalyzer
+        run: ./tools/Invoke-Lint.ps1
+
+      - name: Pester
+        run: ./tools/Invoke-Tests.ps1 -ResultPath ./testResults-pwsh.xml
+
+      - name: Dry run smoke tests
+        run: |
+          ./bootstrap-dev-sec.ps1 -Mode Full -DryRun -WithWSL -WithDocker
+          if ($LASTEXITCODE -ne 0) { throw "Full dry run exited $LASTEXITCODE" }
+          ./bootstrap-dev-sec.ps1 -Mode Sec -Skip QoL -Include MalwareAnalysis -DryRun -SkipProfile
+          if ($LASTEXITCODE -ne 0) { throw "Sec dry run exited $LASTEXITCODE" }
+
+      - name: Read-only security assessment of the runner
+        run: |
+          ./bootstrap-dev-sec.ps1 -Assess -ReportDirectory ./ci-reports
+          if ($LASTEXITCODE -ne 0) { throw "Assessment exited $LASTEXITCODE" }
+
+      - name: Remediation plan with -WhatIf (no changes)
+        run: |
+          ./bootstrap-dev-sec.ps1 -Remediate -WhatIf
+          if ($LASTEXITCODE -ne 0) { throw "WhatIf remediation exited $LASTEXITCODE" }
+          if (Test-Path ./backup) { throw 'A backup file was written during -WhatIf' }
+
+      - name: Upload test results and runner assessment
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: results-pwsh
+          path: |
+            testResults-pwsh.xml
+            ci-reports/
+          if-no-files-found: warn
+
+  windows-powershell-51:
+    name: Windows PowerShell 5.1 (tests, smoke)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Pester
+        run: |
+          $ErrorActionPreference = 'Stop'
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          # -SkipPublisherCheck: Windows ships Pester 3.4 signed by a different publisher.
+          Install-Module Pester -RequiredVersion $env:PESTER_VERSION -Scope CurrentUser -Force -SkipPublisherCheck
+
+      - name: Pester
+        run: ./tools/Invoke-Tests.ps1 -ResultPath ./testResults-ps51.xml
+
+      - name: Dry run and read-only assessment
+        run: |
+          ./bootstrap-dev-sec.ps1 -Mode Full -DryRun
+          if ($LASTEXITCODE -ne 0) { throw "Dry run exited $LASTEXITCODE" }
+          ./bootstrap-dev-sec.ps1 -Assess -ReportDirectory ./ci-reports
+          if ($LASTEXITCODE -ne 0) { throw "Assessment exited $LASTEXITCODE" }
+
+      - name: Upload test results and runner assessment
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: results-ps51
+          path: |
+            testResults-ps51.xml
+            ci-reports/
+          if-no-files-found: warn
