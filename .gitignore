@@ -17,3 +17,5 @@ coverage.xml
 .idea/
 Thumbs.db
 .DS_Store
+
+docs/RESUME.md
