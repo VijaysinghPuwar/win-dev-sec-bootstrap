@@ -193,7 +193,7 @@ win-dev-sec-bootstrap/
 │   └── Reporting.psm1             Console summaries, JSON and HTML reports
 ├── tests/                         Pester suites and synthetic snapshot fixtures
 ├── tools/                         Lint and test runners, doc and sample generators
-├── docs/                          Control reference, sample reports, resume notes
+├── docs/                          Control reference and sample reports
 ├── .github/workflows/             CI (Windows, PS 7 and 5.1) and secret scanning
 ├── PSScriptAnalyzerSettings.psd1  Analyzer rules, including 5.1/7 compatibility checks
 └── LICENSE
